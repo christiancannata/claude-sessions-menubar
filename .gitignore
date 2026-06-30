@@ -1,0 +1,10 @@
+# build artifacts
+build/
+*.app/
+# macOS
+.DS_Store
+# backups
+*.bak
+*.bak.*
+# distributable zip
+*.zip
