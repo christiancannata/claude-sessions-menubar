@@ -1,84 +1,97 @@
 # Claude Sessions — menu bar
 
-App nativa macOS (menu bar, niente icona nel Dock) che mostra tutte le sessioni
-di **Claude Code** attive, in quale app/IDE girano, su quale progetto, e **cosa
-stanno facendo in questo momento**.
+A native macOS menu-bar app (no Dock icon) that shows every running **Claude Code**
+session, which app/IDE it runs in, which project it's working on, and **what it's
+doing right now**.
 
-![Notifiche di Claude Sessions](press/notifications.gif)
+![Claude Sessions notifications](press/notifications.gif)
 
-Quando una sessione **finisce** o **ti chiede qualcosa**, arriva un **toast**
-cliccabile in alto a destra (icona dell'app + progetto + cosa chiede) con suono.
-Click sul toast → porta in primo piano la sessione giusta.
+When a session **finishes** or **needs you**, a clickable **toast** appears in the
+top-right corner (app icon + project + what it's asking) with a sound. Click the
+toast to bring that session to the front.
 
-- 🟢 **sta lavorando** (genera o esegue tool)
-- 🟡 **ti sta chiedendo qualcosa** (permesso / conferma / input)
-- ⚪️ **ha finito** (pronto per il prossimo prompt)
-- ⚫️ stato sconosciuto (sessione partita prima dell'installazione hook)
+- 🟢 **working** (generating or running tools)
+- 🟡 **waiting for you** (permission / confirmation / input)
+- ⚪️ **done** (ready for the next prompt)
+- ⚫️ unknown (session started before the hooks were installed)
 
-## Anteprima
+## Sounds
 
-Una singola notifica, quando una sessione ti chiede un permesso:
+Notifications play a distinct system sound per event, so you can tell them apart
+without looking:
 
-![Una sessione chiede un permesso](press/notification-waiting.png)
+- 🟡 **waiting for you** → `Submarine`
+- 🟢 **done** → `Glass`
 
-Il menu della campanella elenca tutte le sessioni attive, con stato e progetto:
+Sounds can be muted anytime from the bell menu (**Notification sounds**); the
+toasts keep working silently. They use built-in macOS sounds
+(`/System/Library/Sounds`) played via `afplay` — nothing is bundled or downloaded.
 
-![Menu con le sessioni attive](press/menu.png)
+## Preview
 
-> L'app segue la lingua di sistema del Mac (**italiano** o **inglese**).
-> Puoi forzarla con `--lang=it` / `--lang=en`.
+A single notification, when a session asks for permission:
 
-## Installazione
+![A session asking for permission](press/notification-waiting.png)
 
-Requisiti: macOS 12+, **Xcode Command Line Tools** (`xcode-select --install`),
-e ovviamente **Claude Code**.
+The bell menu lists every active session, with its state and project:
+
+![Menu listing the active sessions](press/menu.png)
+
+> The app follows the Mac's system language (**Italian** or **English**).
+> You can force it with `--lang=it` / `--lang=en`.
+
+## Install
+
+Requirements: macOS 12+, **Xcode Command Line Tools** (`xcode-select --install`),
+and of course **Claude Code**.
 
 ```bash
 bash install.sh
 ```
 
-Lo script: compila l'app in locale, la installa in `~/Applications`, registra gli
-hook in `~/.claude/settings.json` (con backup, senza toccare hook esistenti) e la
-avvia. L'avvio al login e il mute dei suoni si attivano dal menu della campanella.
+The script builds the app locally, installs it to `~/Applications`, registers the
+hooks in `~/.claude/settings.json` (with a backup, leaving existing hooks
+untouched), and launches it. Launch-at-login and muting sounds are toggled from
+the bell menu.
 
-> Le sessioni Claude **già aperte** prima dell'installazione mostrano ⚫️ finché
-> non le riavvii. Le nuove partono già tracciate.
+> Claude sessions **already open** before installation show ⚫️ until you restart
+> them. New sessions are tracked from the start.
 
-### Disinstallazione
+### Uninstall
 
 ```bash
 bash uninstall.sh
 ```
 
-Rimuove app, avvio al login e i nostri hook (backup di settings.json incluso).
+Removes the app, the login item, and our hooks (with a backup of settings.json).
 
-## Sicurezza — cosa fa e cosa NON fa
+## Security — what it does and does NOT do
 
-Tutto è ispezionabile nel sorgente (`ClaudeSessions.swift`, `hook.sh`). In sintesi:
+Everything is inspectable in the source (`ClaudeSessions.swift`, `hook.sh`). In short:
 
-- **Nessuna rete, nessuna telemetria, nessun `sudo`.** Gira come utente normale.
-- **Cosa legge**: l'elenco dei processi (`ps`) e la cartella di lavoro delle
-  sessioni (`lsof`), per capire app host e progetto.
-- **Cosa scrive**: file di stato in `~/.claude/session-state/` (uno per sessione)
-  e gli hook in `~/.claude/settings.json` (con backup automatico).
-- **Compilata localmente**: nessun binario di terze parti, nessun avviso
-  Gatekeeper "sviluppatore non identificato" (l'app nasce dal tuo Mac).
-- **Strumenti di sistema** invocati con percorso assoluto (`/bin/ps`, `/usr/sbin/lsof`,
+- **No network, no telemetry, no `sudo`.** Runs as a normal user.
+- **What it reads**: the process list (`ps`) and each session's working directory
+  (`lsof`), to figure out the host app and project.
+- **What it writes**: state files in `~/.claude/session-state/` (one per session)
+  and the hooks in `~/.claude/settings.json` (with an automatic backup).
+- **Built locally**: no third-party binaries, no Gatekeeper "unidentified
+  developer" warning (the app is compiled on your own Mac).
+- **System tools** are invoked with absolute paths (`/bin/ps`, `/usr/sbin/lsof`,
   `/usr/bin/afplay`, `/bin/launchctl`).
 
-## Come funziona (tecnico)
+## How it works (technical)
 
-1. **Sessioni + app host** (`ClaudeSessions.swift`): trova i processi `claude` e
-   risale i parent fino al primo bundle `.app` (gestisce gli helper Electron
-   annidati di VS Code/Cursor). Funziona con iTerm, Terminal, JetBrains, VS Code,
-   Cursor, Windsurf, Zed, Warp, Ghostty, ecc.
-2. **Stato** (`hook.sh`): ogni sessione scrive il proprio stato sugli eventi
+1. **Sessions + host app** (`ClaudeSessions.swift`): finds the `claude` processes
+   and walks up the parents to the first `.app` bundle (handling VS Code/Cursor's
+   nested Electron helpers). Works with iTerm, Terminal, JetBrains, VS Code,
+   Cursor, Windsurf, Zed, Warp, Ghostty, etc.
+2. **State** (`hook.sh`): each session writes its own state on the
    UserPromptSubmit/Pre/PostToolUse (working), Notification (waiting), Stop (done),
-   SessionEnd (rimosso). Per `Notification` diventa giallo **solo** per richieste
-   reali (`notification_type` permission/elicit/approval), non per l'inattività.
-3. **Notifiche**: gestite dall'app come **toast interni** (NSPanel), non dal
-   Notification Center di macOS — così funzionano anche se quello è disabilitato o
-   corrotto. Click sul toast → porta in primo piano la sessione.
+   and SessionEnd (removed) events. For `Notification` it turns yellow **only** for
+   real requests (`notification_type` permission/elicit/approval), not for idle.
+3. **Notifications**: handled by the app as **in-app toasts** (NSPanel), not via
+   the macOS Notification Center — so they work even if that's disabled or broken.
+   Clicking a toast brings the session to the front.
 
 ### Debug
 
@@ -86,32 +99,32 @@ Tutto è ispezionabile nel sorgente (`ClaudeSessions.swift`, `hook.sh`). In sint
 ~/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions --scan
 ```
 
-Stampa le sessioni rilevate e il loro stato senza toccare la menu bar.
+Prints the detected sessions and their state without touching the menu bar.
 
-## Immagini promozionali
+## Promo assets
 
-Gli asset del README stanno nella cartella [`press/`](press/) e sono liberi da
-riusare (post, README, Product Hunt, ecc.):
+The README's assets live in [`press/`](press/) and are free to reuse (posts,
+READMEs, Product Hunt, etc.):
 
-| File | Cosa mostra |
-|------|-------------|
-| `press/notifications.gif` | I toast che arrivano in sequenza |
-| `press/notification-waiting.png` | Una singola notifica "richiede attenzione" |
-| `press/menu.png` | Il menu con le sessioni attive |
+| File | What it shows |
+|------|---------------|
+| `press/notifications.gif` | Toasts arriving in sequence |
+| `press/notification-waiting.png` | A single "needs you" notification |
+| `press/menu.png` | The menu with the active sessions |
 
-Rigenerabili in locale con le modalità demo dell'app (sessioni finte, sfondo
-brandizzato, nessun dato reale):
+Regenerate them locally with the app's demo modes (fake sessions, branded
+backdrop, no real data):
 
 ```bash
-ClaudeSessions --demo-menu   --lang=en   # apre il menu con sessioni di esempio
-ClaudeSessions --demo-toasts --lang=en   # riproduce la sequenza di notifiche
+ClaudeSessions --demo-menu   --lang=en   # opens the menu with sample sessions
+ClaudeSessions --demo-toasts --lang=en   # plays the notification sequence
 ```
 
-## Limiti noti
+## Known limitations
 
-- **tmux**: una sessione lanciata dentro tmux appare come "Terminale" (il server
-  tmux è staccato da launchd). Stati e toast funzionano comunque.
+- **tmux**: a session started inside tmux shows up as "Terminal" (the tmux server
+  is detached from launchd). States and toasts still work.
 
-## Licenza
+## License
 
-MIT — vedi `LICENSE`.
+MIT — see `LICENSE`.
