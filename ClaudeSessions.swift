@@ -1,5 +1,25 @@
 import Cocoa
 
+// MARK: - Localization
+
+// The app follows the Mac's language: Italian when the system's preferred
+// language is Italian, English otherwise (default fallback).
+enum Lang { case it, en }
+
+let appLang: Lang = {
+    // Explicit override (mainly for demo/promo rendering): --lang=it / --lang=en
+    if let arg = CommandLine.arguments.first(where: { $0.hasPrefix("--lang=") }) {
+        return arg.hasSuffix("it") ? .it : .en
+    }
+    let pref = Locale.preferredLanguages.first ?? "en"
+    return pref.hasPrefix("it") ? .it : .en
+}()
+
+enum L {
+    /// Pick the string matching the current app language.
+    static func t(_ it: String, _ en: String) -> String { appLang == .it ? it : en }
+}
+
 // MARK: - Models
 
 struct ProcInfo {
@@ -25,10 +45,10 @@ enum SessionState: String {
 
     var label: String {
         switch self {
-        case .working: return "sta lavorando"
-        case .waiting: return "ti sta chiedendo qualcosa"
-        case .done:    return "ha finito"
-        case .unknown: return "stato sconosciuto"
+        case .working: return L.t("sta lavorando", "working")
+        case .waiting: return L.t("ti sta chiedendo qualcosa", "waiting for you")
+        case .done:    return L.t("ha finito", "done")
+        case .unknown: return L.t("stato sconosciuto", "unknown")
         }
     }
 
@@ -55,6 +75,10 @@ struct Session {
     var ts: Date?
 }
 
+// Injected by --demo modes so the menu/toasts show clean, fake sessions
+// instead of the real ones (keeps private project names out of promo material).
+var demoSessions: [Session]? = nil
+
 // MARK: - Scanner
 
 final class SessionScanner {
@@ -70,6 +94,7 @@ final class SessionScanner {
     ]
 
     func scan() -> [Session] {
+        if let demo = demoSessions { return demo }
         let procs = psSnapshot()
         var byPid: [Int: ProcInfo] = [:]
         for p in procs { byPid[p.pid] = p }
@@ -131,7 +156,7 @@ final class SessionScanner {
             cur = p.ppid
         }
         // Reached launchd/tmux without a GUI ancestor (e.g. detached tmux session).
-        return ("Terminale", nil)
+        return (L.t("Terminale", "Terminal"), nil)
     }
 
     // MARK: helpers
@@ -255,6 +280,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusButton()
     }
 
+    // Demo helper: programmatically drop the menu open so an external
+    // screencapture can grab it. Blocks until the menu is dismissed.
+    func openMenuForDemo() {
+        statusItem?.button?.performClick(nil)
+    }
+
     // MARK: - Notifications on state change
 
     private func detectTransitions() {
@@ -273,10 +304,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let headline = "\(s.appName) · \(scanner.prettyPath(s.cwd))"
             if s.state == .waiting && prev != .waiting {
                 notifyUser(headline: headline,
-                           detail: s.message ?? "ti sta chiedendo qualcosa",
+                           detail: s.message ?? L.t("ti sta chiedendo qualcosa", "is asking you something"),
                            color: .systemYellow, sound: "Submarine", appPath: s.appPath)
             } else if s.state == .done && prev == .working {
-                notifyUser(headline: headline, detail: "ha finito di lavorare",
+                notifyUser(headline: headline, detail: L.t("ha finito di lavorare", "finished working"),
                            color: .systemGreen, sound: "Glass", appPath: s.appPath)
             }
         }
@@ -360,10 +391,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let header = NSMenuItem(title: cachedSessions.isEmpty
-            ? "Nessuna sessione Claude attiva"
-            : "Claude — \(cachedSessions.count) sessione\(cachedSessions.count == 1 ? "" : "i") attiv\(cachedSessions.count == 1 ? "a" : "e")",
-            action: nil, keyEquivalent: "")
+        let n = cachedSessions.count
+        let headerTitle: String
+        if n == 0 {
+            headerTitle = L.t("Nessuna sessione Claude attiva", "No active Claude sessions")
+        } else {
+            headerTitle = L.t(
+                "Claude — \(n) sessione\(n == 1 ? "" : "i") attiv\(n == 1 ? "a" : "e")",
+                "Claude — \(n) active session\(n == 1 ? "" : "s")")
+        }
+        let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
@@ -394,7 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 sub.addItem(m)
             }
             sub.addItem(NSMenuItem(title: "pid \(s.pid)", action: nil, keyEquivalent: ""))
-            let openFolder = NSMenuItem(title: "Apri cartella nel Finder", action: #selector(openFolder(_:)), keyEquivalent: "")
+            let openFolder = NSMenuItem(title: L.t("Apri cartella nel Finder", "Open folder in Finder"), action: #selector(openFolder(_:)), keyEquivalent: "")
             openFolder.target = self
             openFolder.tag = idx
             sub.addItem(openFolder)
@@ -403,17 +440,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        let soundsItem = NSMenuItem(title: "Suoni di notifica", action: #selector(toggleSounds(_:)), keyEquivalent: "")
+        let soundsItem = NSMenuItem(title: L.t("Suoni di notifica", "Notification sounds"), action: #selector(toggleSounds(_:)), keyEquivalent: "")
         soundsItem.target = self
         soundsItem.state = soundsEnabled ? .on : .off
         menu.addItem(soundsItem)
 
-        let loginItem = NSMenuItem(title: "Avvia al login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
+        let loginItem = NSMenuItem(title: L.t("Avvia al login", "Launch at login"), action: #selector(toggleLogin(_:)), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = loginEnabled ? .on : .off
         menu.addItem(loginItem)
 
-        let quit = NSMenuItem(title: "Esci", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L.t("Esci", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
 
@@ -479,10 +516,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func relative(_ date: Date) -> String {
         let s = Int(Date().timeIntervalSince(date))
-        if s < 5 { return "ora" }
-        if s < 60 { return "\(s)s fa" }
-        if s < 3600 { return "\(s/60)m fa" }
-        return "\(s/3600)h fa"
+        if s < 5 { return L.t("ora", "now") }
+        if s < 60 { return L.t("\(s)s fa", "\(s)s ago") }
+        if s < 3600 { return L.t("\(s/60)m fa", "\(s/60)m ago") }
+        return L.t("\(s/3600)h fa", "\(s/3600)h ago")
     }
 
     @objc private func activateSession(_ sender: NSMenuItem) {
@@ -644,10 +681,121 @@ if CommandLine.arguments.contains("--toast-test") {
 if CommandLine.arguments.contains("--scan") {
     let sc = SessionScanner()
     let sessions = sc.scan()
-    if sessions.isEmpty { print("Nessuna sessione Claude attiva.") }
+    if sessions.isEmpty { print(L.t("Nessuna sessione Claude attiva.", "No active Claude sessions.")) }
     for s in sessions {
         print("\(s.state.dot) \(s.appName)  [\(s.state.label)]  \(sc.prettyPath(s.cwd))  pid \(s.pid)")
     }
+    exit(0)
+}
+
+// MARK: - Demo / promo rendering
+//
+// Fake but realistic sessions used by the --demo-* modes so the promo
+// material never shows real project paths.
+func demoMockSessions() -> [Session] {
+    let home = NSHomeDirectory()
+    return [
+        Session(pid: 4821, appName: "WebStorm",
+                appPath: "/Applications/WebStorm.app",
+                cwd: home + "/projects/checkout-api", state: .waiting,
+                event: nil, tool: nil,
+                message: L.t("Posso eseguire `npm run migrate`?", "Can I run `npm run migrate`?"),
+                ts: Date().addingTimeInterval(-8)),
+        Session(pid: 3390, appName: "iTerm",
+                appPath: "/Applications/iTerm.app",
+                cwd: home + "/blog", state: .working,
+                event: nil, tool: "Edit", message: nil,
+                ts: Date().addingTimeInterval(-3)),
+        Session(pid: 2077, appName: L.t("Terminale", "Terminal"),
+                appPath: "/System/Applications/Utilities/Terminal.app",
+                cwd: home + "/api-server", state: .done,
+                event: nil, tool: nil, message: nil,
+                ts: Date().addingTimeInterval(-42)),
+    ]
+}
+
+// Full-screen gradient backdrop for promo captures: hides the real desktop
+// (privacy) and gives the menu/toasts a clean, branded background. Sits above
+// other apps' windows but below the status menu (level ~101) and toasts (25).
+var demoBGWindow: NSWindow?
+func showDemoBackground() {
+    guard let screen = NSScreen.main else { return }
+    let w = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
+                     backing: .buffered, defer: false)
+    // Just above normal app windows (covers the real desktop) but well below
+    // the toasts (.statusBar) and the status menu, so those render on top.
+    w.level = NSWindow.Level(rawValue: 1)
+    w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    w.isOpaque = true
+    w.ignoresMouseEvents = true
+
+    let v = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+    v.wantsLayer = true
+    let g = CAGradientLayer()
+    g.frame = v.bounds
+    g.colors = [
+        NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.20, alpha: 1).cgColor,
+        NSColor(calibratedRed: 0.28, green: 0.18, blue: 0.55, alpha: 1).cgColor,
+        NSColor(calibratedRed: 0.49, green: 0.24, blue: 0.62, alpha: 1).cgColor,
+    ]
+    g.startPoint = CGPoint(x: 0, y: 1)
+    g.endPoint = CGPoint(x: 1, y: 0)
+    v.layer?.addSublayer(g)
+    w.contentView = v
+    w.orderFrontRegardless()
+    demoBGWindow = w
+}
+
+// `--demo-menu`: show the bell with a badge and drop the menu open, then wait
+// (an external screencapture grabs the still; the process is killed afterwards).
+if CommandLine.arguments.contains("--demo-menu") {
+    demoSessions = demoMockSessions()
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showDemoBackground() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        delegate.openMenuForDemo()
+    }
+    app.run()
+    exit(0)
+}
+
+// `--demo-toasts`: play the two notification toasts (waiting → done) in sequence
+// so an external screen recording can capture the animation.
+if CommandLine.arguments.contains("--demo-toasts") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let mgr = ToastManager()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showDemoBackground() }
+    let yellow = NSColor.systemYellow
+    let green = NSColor.systemGreen
+
+    // A curated sequence of good-looking example notifications: they arrive
+    // staggered so they stack, showing off both states (needs-you / done).
+    struct Demo { let at: Double; let head: String; let detail: String; let color: NSColor; let app: String }
+    let vscode = "/Applications/WebStorm.app"
+    let iterm  = "/Applications/iTerm.app"
+    let term   = "/System/Applications/Utilities/Terminal.app"
+    let seq: [Demo] = [
+        Demo(at: 0.6, head: "WebStorm · ~/checkout-api",
+             detail: L.t("Posso eseguire `npm run migrate`?", "Can I run `npm run migrate`?"),
+             color: yellow, app: vscode),
+        Demo(at: 2.2, head: "iTerm · ~/blog",
+             detail: L.t("ha finito di lavorare", "finished working"),
+             color: green, app: iterm),
+        Demo(at: 3.8, head: L.t("Terminale", "Terminal") + " · ~/api-server",
+             detail: L.t("Vuoi che faccia il commit di 12 file?", "Want me to commit 12 files?"),
+             color: yellow, app: term),
+    ]
+    for d in seq {
+        DispatchQueue.main.asyncAfter(deadline: .now() + d.at) {
+            mgr.show(headline: d.head, detail: d.detail, accent: d.color, appPath: d.app)
+        }
+    }
+    Timer.scheduledTimer(withTimeInterval: 12, repeats: false) { _ in NSApp.terminate(nil) }
+    app.run()
     exit(0)
 }
 

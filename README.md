@@ -2,15 +2,31 @@
 
 App nativa macOS (menu bar, niente icona nel Dock) che mostra tutte le sessioni
 di **Claude Code** attive, in quale app/IDE girano, su quale progetto, e **cosa
-stanno facendo in questo momento**:
+stanno facendo in questo momento**.
+
+![Notifiche di Claude Sessions](press/notifications.gif)
+
+Quando una sessione **finisce** o **ti chiede qualcosa**, arriva un **toast**
+cliccabile in alto a destra (icona dell'app + progetto + cosa chiede) con suono.
+Click sul toast → porta in primo piano la sessione giusta.
 
 - 🟢 **sta lavorando** (genera o esegue tool)
 - 🟡 **ti sta chiedendo qualcosa** (permesso / conferma / input)
 - ⚪️ **ha finito** (pronto per il prossimo prompt)
 - ⚫️ stato sconosciuto (sessione partita prima dell'installazione hook)
 
-Quando una sessione **finisce** o **ti chiede qualcosa**, mostra un **toast**
-cliccabile in alto a destra (icona dell'app + progetto + cosa chiede) con suono.
+## Anteprima
+
+Una singola notifica, quando una sessione ti chiede un permesso:
+
+![Una sessione chiede un permesso](press/notification-waiting.png)
+
+Il menu della campanella elenca tutte le sessioni attive, con stato e progetto:
+
+![Menu con le sessioni attive](press/menu.png)
+
+> L'app segue la lingua di sistema del Mac (**italiano** o **inglese**).
+> Puoi forzarla con `--lang=it` / `--lang=en`.
 
 ## Installazione
 
@@ -71,6 +87,25 @@ Tutto è ispezionabile nel sorgente (`ClaudeSessions.swift`, `hook.sh`). In sint
 ```
 
 Stampa le sessioni rilevate e il loro stato senza toccare la menu bar.
+
+## Immagini promozionali
+
+Gli asset del README stanno nella cartella [`press/`](press/) e sono liberi da
+riusare (post, README, Product Hunt, ecc.):
+
+| File | Cosa mostra |
+|------|-------------|
+| `press/notifications.gif` | I toast che arrivano in sequenza |
+| `press/notification-waiting.png` | Una singola notifica "richiede attenzione" |
+| `press/menu.png` | Il menu con le sessioni attive |
+
+Rigenerabili in locale con le modalità demo dell'app (sessioni finte, sfondo
+brandizzato, nessun dato reale):
+
+```bash
+ClaudeSessions --demo-menu   --lang=en   # apre il menu con sessioni di esempio
+ClaudeSessions --demo-toasts --lang=en   # riproduce la sequenza di notifiche
+```
 
 ## Limiti noti
 
