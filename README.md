@@ -120,6 +120,15 @@ ClaudeSessions --demo-menu   --lang=en   # opens the menu with sample sessions
 ClaudeSessions --demo-toasts --lang=en   # plays the notification sequence
 ```
 
+## Windows / other platforms
+
+This app is macOS-only, but the design splits cleanly into a platform-agnostic
+**state-file contract** and a thin platform-specific tray/toast shell. A Windows
+(or Linux) client is a realistic weekend project — **contributions are welcome**.
+
+See **[PORTING.md](PORTING.md)** for the full spec: the JSON state contract, the
+hook event → state mapping, and a macOS → Windows API mapping table.
+
 ## Known limitations
 
 - **tmux**: a session started inside tmux shows up as "Terminal" (the tmux server
