@@ -235,6 +235,19 @@ func run(_ launchPath: String, _ args: [String]) -> String {
     return String(data: data, encoding: .utf8) ?? ""
 }
 
+// Compare dotted-integer versions: true if `remote` is strictly newer than `local`.
+// Free function so both the app's updater and the `--vercmp` CLI test share it.
+func versionIsNewer(_ remote: String, than local: String) -> Bool {
+    let r = remote.split(separator: ".").map { Int($0) ?? 0 }
+    let l = local.split(separator: ".").map { Int($0) ?? 0 }
+    for i in 0..<max(r.count, l.count) {
+        let rv = i < r.count ? r[i] : 0
+        let lv = i < l.count ? l[i] : 0
+        if rv != lv { return rv > lv }
+    }
+    return false
+}
+
 // MARK: - Bell icon (shared by the real menu bar and the promo scene)
 
 // Builds the menu-bar bell symbol: white/template when calm, a yellow
@@ -295,6 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+        autoCheckForUpdatesIfDue()
     }
 
     private func refresh() {
@@ -497,8 +511,119 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loginItem.state = loginEnabled ? .on : .off
         menu.addItem(loginItem)
 
+        menu.addItem(.separator())
+        let updateItem = NSMenuItem(title: L.t("Controlla aggiornamenti…", "Check for updates…"),
+                                    action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
         let quit = NSMenuItem(title: L.t("Esci", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
+    }
+
+    // MARK: - Updates
+
+    private let updateVersionURL =
+        "https://raw.githubusercontent.com/christiancannata/claude-sessions-menubar/main/VERSION"
+
+    private var currentVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
+    }
+
+    // Compare dotted-integer versions: returns true if `remote` is newer than `local`.
+    private func isNewer(_ remote: String, than local: String) -> Bool {
+        versionIsNewer(remote, than: local)
+    }
+
+    // Manual check from the menu: always reports a result (even "up to date").
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        performUpdateCheck(silent: false)
+    }
+
+    // Auto check at launch: silent unless a newer version exists, throttled to
+    // once per day so we don't hit GitHub (or nag) on every relaunch.
+    private let lastUpdateCheckKey = "lastAutoUpdateCheck"
+    private func autoCheckForUpdatesIfDue() {
+        let now = Date().timeIntervalSince1970
+        let last = UserDefaults.standard.double(forKey: lastUpdateCheckKey)
+        if now - last < 24 * 60 * 60 { return }           // less than a day ago
+        UserDefaults.standard.set(now, forKey: lastUpdateCheckKey)
+        performUpdateCheck(silent: true)
+    }
+
+    private func performUpdateCheck(silent: Bool) {
+        let local = currentVersion
+        guard let url = URL(string: updateVersionURL) else { return }
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.timeoutInterval = 10
+        URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                guard status == 200, let data = data,
+                      let raw = String(data: data, encoding: .utf8) else {
+                    if !silent {   // stay quiet on the automatic check
+                        self.showUpdateAlert(
+                            title: L.t("Impossibile controllare gli aggiornamenti",
+                                       "Couldn’t check for updates"),
+                            info: err?.localizedDescription
+                                ?? L.t("Controlla la connessione e riprova.",
+                                       "Check your connection and try again."),
+                            offerUpdate: false)
+                    }
+                    return
+                }
+                let remote = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                // guard against junk (e.g. an HTML error page): expect digits/dots only
+                let valid = !remote.isEmpty &&
+                    remote.allSatisfy { $0.isNumber || $0 == "." }
+                if valid && self.isNewer(remote, than: local) {
+                    self.showUpdateAlert(
+                        title: L.t("Nuova versione disponibile", "New version available"),
+                        info: L.t("Hai la v\(local), è disponibile la v\(remote).\nVuoi aggiornare adesso? L’app verrà ricompilata e riavviata.",
+                                  "You have v\(local); v\(remote) is available.\nUpdate now? The app will be rebuilt and relaunched."),
+                        offerUpdate: true)
+                } else if !silent {
+                    self.showUpdateAlert(
+                        title: L.t("Sei già aggiornato", "You’re up to date"),
+                        info: L.t("Versione installata: v\(local).",
+                                  "Installed version: v\(local)."),
+                        offerUpdate: false)
+                }
+            }
+        }.resume()
+    }
+
+    private func showUpdateAlert(title: String, info: String, offerUpdate: Bool) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = info
+        if offerUpdate {
+            alert.addButton(withTitle: L.t("Aggiorna", "Update"))
+            alert.addButton(withTitle: L.t("Più tardi", "Later"))
+        } else {
+            alert.addButton(withTitle: L.t("OK", "OK"))
+        }
+        let resp = alert.runModal()
+        if offerUpdate && resp == .alertFirstButtonReturn {
+            runUpdater()
+        }
+    }
+
+    private func runUpdater() {
+        // The updater ships inside the app bundle (Resources/update.sh). Run it in
+        // Terminal so it survives this app quitting and the user sees the progress.
+        guard let script = Bundle.main.url(forResource: "update", withExtension: "sh")?.path else {
+            showUpdateAlert(
+                title: L.t("Updater non trovato", "Updater not found"),
+                info: L.t("Reinstalla dai sorgenti con: bash install.sh",
+                          "Reinstall from source with: bash install.sh"),
+                offerUpdate: false)
+            return
+        }
+        run("/usr/bin/open", ["-a", "Terminal", script])
     }
 
     private var soundsDisabledURL: URL {
@@ -763,6 +888,17 @@ if CommandLine.arguments.contains("--toast-test") {
     }
     Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { _ in NSApp.terminate(nil) }
     app.run()
+    exit(0)
+}
+
+// `--vercmp A B`: prints "newer" if A is a strictly newer version than B, else
+// "not-newer". Used by test.sh to exercise the real version-compare logic.
+if let i = CommandLine.arguments.firstIndex(of: "--vercmp") {
+    let args = CommandLine.arguments
+    guard i + 2 < args.count else {
+        FileHandle.standardError.write(Data("usage: --vercmp <A> <B>\n".utf8)); exit(2)
+    }
+    print(versionIsNewer(args[i + 1], than: args[i + 2]) ? "newer" : "not-newer")
     exit(0)
 }
 

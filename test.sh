@@ -126,6 +126,62 @@ read -r MN MX UNREL < <(stats)
 valid_json "$HOME/.claude/settings.json" && ok "settings.json stays valid JSON" || no "settings.json invalid after install-hooks"
 
 # ---------------------------------------------------------------------------
+sect "5. Versioning + updater"
+# restore a clean HOME for these checks (section 3 pointed it at the sandbox)
+export HOME="$SANDBOX/home"
+
+VERSION="$(tr -d ' \t\r\n' < "$ROOT/VERSION" 2>/dev/null)"
+[ -n "$VERSION" ] && ok "VERSION file present ($VERSION)" || no "VERSION file missing/empty"
+
+# version-compare uses the REAL Swift logic via the --vercmp CLI
+if [ -x "$BIN" ]; then
+  vc() { "$BIN" --vercmp "$1" "$2" 2>/dev/null; }
+  [ "$(vc 1.1 1.0)" = "newer" ]      && ok "vercmp 1.1 > 1.0"        || no "vercmp 1.1 vs 1.0 wrong: $(vc 1.1 1.0)"
+  [ "$(vc 1.0 1.1)" = "not-newer" ]  && ok "vercmp 1.0 !> 1.1"       || no "vercmp 1.0 vs 1.1 wrong: $(vc 1.0 1.1)"
+  [ "$(vc 1.1 1.1)" = "not-newer" ]  && ok "vercmp equal !> equal"   || no "vercmp equal wrong: $(vc 1.1 1.1)"
+  [ "$(vc 1.10 1.9)" = "newer" ]     && ok "vercmp 1.10 > 1.9 (numeric, not lexical)" || no "vercmp 1.10 vs 1.9 wrong: $(vc 1.10 1.9)"
+else
+  no "no binary for --vercmp"
+fi
+
+# build.sh must stamp the version and bundle the updater
+BLOG="$SANDBOX/full-build.log"
+if ( cd "$ROOT" && bash build.sh ) >"$BLOG" 2>&1; then
+  PLIST="$ROOT/build/ClaudeSessions.app/Contents/Info.plist"
+  STAMPED="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PLIST" 2>/dev/null)"
+  [ "$STAMPED" = "$VERSION" ] && ok "bundle Info.plist stamped with v$VERSION" || no "bundle version is '$STAMPED', expected '$VERSION'"
+  [ -x "$ROOT/build/ClaudeSessions.app/Contents/Resources/update.sh" ] && ok "update.sh bundled into the .app" || no "update.sh NOT bundled"
+  [ -x "$ROOT/build/ClaudeSessions.app/Contents/Resources/hook.sh" ]   && ok "hook.sh bundled into the .app"   || no "hook.sh NOT bundled"
+else
+  no "build.sh FAILED:"; sed 's/^/        /' "$BLOG"
+fi
+
+# update.sh end-to-end against a local fake "remote" (no network, sandbox DEST)
+bash -n "$ROOT/update.sh" && ok "update.sh syntax valid" || no "update.sh syntax error"
+if command -v git >/dev/null 2>&1; then
+  REMOTE="$SANDBOX/remote"; UDEST="$SANDBOX/apps"; RUNDIR="$SANDBOX/rundir"
+  mkdir -p "$UDEST" "$RUNDIR"
+  # build a fake remote = copy of the WORKING TREE (not HEAD) bumped to a higher
+  # version, so this exercises exactly the code we're about to commit.
+  mkdir -p "$REMOTE"
+  ( cd "$ROOT" && tar --exclude=./build --exclude=./.git -cf - . ) | tar -xf - -C "$REMOTE"
+  printf '9.9\n' > "$REMOTE/VERSION"
+  ( cd "$REMOTE" && git init -q && git add -A \
+      && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git commit -qm t \
+      && git branch -M main ) >/dev/null 2>&1
+  cp "$ROOT/update.sh" "$RUNDIR/update.sh"   # run OUTSIDE a work tree -> clone path
+  if CS_REPO="file://$REMOTE" CS_BRANCH=main CS_DEST="$UDEST" CS_LAUNCH=0 \
+       bash "$RUNDIR/update.sh" >"$SANDBOX/update.log" 2>&1; then
+    UV="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$UDEST/ClaudeSessions.app/Contents/Info.plist" 2>/dev/null)"
+    [ "$UV" = "9.9" ] && ok "update.sh clones, builds & installs the new version (9.9)" || no "updater installed '$UV', expected 9.9"
+  else
+    no "update.sh end-to-end FAILED:"; sed 's/^/        /' "$SANDBOX/update.log"
+  fi
+else
+  no "git not available; skipping update.sh e2e"
+fi
+
+# ---------------------------------------------------------------------------
 sect "Result"
 printf "  %d passed, %d failed\n\n" "$PASS" "$FAIL"
 if [ "$FAIL" -eq 0 ]; then printf "\033[32mAll good ✅\033[0m\n"; exit 0

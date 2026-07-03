@@ -4,7 +4,7 @@
 
 ![macOS 12+](https://img.shields.io/badge/macOS-12%2B-black?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-single%20file-orange?logo=swift&logoColor=white)
-![No network](https://img.shields.io/badge/network-none-brightgreen)
+![Network: update check only](https://img.shields.io/badge/network-update%20check%20only-brightgreen)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 A native macOS menu-bar app (no Dock icon) that shows every running **Claude Code**
@@ -36,7 +36,7 @@ Nothing rots on your watch. Toggle it any time from the bell menu
 - ⏱️ **Live timers** — *working for 2m*, *waiting 5m*, right in the menu.
 - 🟠 **Anti-stall nudges** — the flagship above: no blocked session goes unnoticed.
 - 🔊 **A distinct sound per event** — tell them apart without looking. Mutable.
-- 🔒 **Zero network, zero telemetry, one Swift file** — compiled on your own Mac, fully auditable, MIT.
+- 🔒 **No telemetry, one Swift file** — compiled on your own Mac, fully auditable, MIT. The only network call is an opt-outable **update check** (a single version string from this repo); see [Updating](#updating).
 
 ## States
 
@@ -95,6 +95,31 @@ toggles in the bell menu.
 > Sessions **already open** before install show ⚫️ until you restart them. New
 > sessions are tracked from the start.
 
+### Updating
+
+Two ways to move to a newer release:
+
+- **From the bell menu → "Check for updates…"** — compares your version against
+  this repo, and if a newer one exists offers to update in one click. It rebuilds
+  from source and relaunches automatically.
+- **From the command line:**
+  ```bash
+  bash update.sh
+  ```
+  Pulls the latest source (or clones it if run from the installed app), rebuilds,
+  reinstalls to `~/Applications`, and restarts the app.
+
+The app also does a **silent** update check on launch, at most once a day: it only
+speaks up if a newer version is actually available, and never interrupts you if it
+isn't (or if you're offline). It sends nothing about you — just fetches a version
+string. To turn the automatic check off entirely, quit the app and run:
+
+```bash
+defaults write com.christiancannata.claudesessions lastAutoUpdateCheck -double 99999999999
+```
+
+You can still update any time from the menu or `update.sh`.
+
 ### Uninstall
 
 ```bash
@@ -105,13 +130,19 @@ Removes the app, the login item, and our hooks (with a backup of `settings.json`
 
 ## Security — what it does and does NOT do
 
-Everything is inspectable in the source (`ClaudeSessions.swift`, `hook.sh`):
+Everything is inspectable in the source (`ClaudeSessions.swift`, `hook.sh`,
+`update.sh`):
 
-- **No network, no telemetry, no `sudo`.** Runs as a normal user.
+- **No telemetry, no `sudo`.** Runs as a normal user.
+- **Network**: the *only* outbound call is the update check — an HTTPS `GET` of a
+  single [`VERSION`](VERSION) string from this GitHub repo. It sends nothing about
+  you (no id, no usage). The updater (`update.sh`, only when you ask) uses `git`
+  to fetch source from this repo. Nothing else touches the network.
 - **Reads**: the process list (`ps`) and each session's working directory (`lsof`),
   to figure out the host app and project.
 - **Writes**: state files in `~/.claude/session-state/` (one per session) and the
-  hooks in `~/.claude/settings.json` (with an automatic backup).
+  hooks in `~/.claude/settings.json` (with an automatic backup). Updates only ever
+  replace `~/Applications/ClaudeSessions.app`.
 - **Built locally**: no third-party binaries, no Gatekeeper "unidentified
   developer" warning — it's compiled on your own Mac.
 - **System tools** are called with absolute paths (`/bin/ps`, `/usr/sbin/lsof`,
@@ -149,8 +180,12 @@ bash test.sh
 
 It checks that the app compiles with no errors *or warnings*, the CLI modes run,
 `hook.sh` writes the state-file contract correctly (including odd characters in
-messages), and `install-hooks.sh` registers every event, stays idempotent, and
-never clobbers your other hooks. Run it before opening a PR.
+messages), `install-hooks.sh` registers every event, stays idempotent, and never
+clobbers your other hooks, and the **versioning + updater** path works end-to-end:
+`build.sh` stamps the [`VERSION`](VERSION) into the bundle and ships the updater,
+the version-compare logic is numeric (`1.10 > 1.9`), and `update.sh` clones,
+rebuilds, and installs a new version against a local fake remote (no network).
+Run it before opening a PR.
 
 ## Promo assets
 

@@ -4,8 +4,10 @@ cd "$(dirname "$0")"
 
 APP="ClaudeSessions"
 BUNDLE="build/$APP.app"
+VERSION="$(tr -d ' \t\r\n' < VERSION 2>/dev/null || echo 1.0)"
 
-echo "Compiling…"
+echo "Compiling… (v$VERSION)"
+mkdir -p build
 swiftc -O ClaudeSessions.swift -o "build/$APP" -framework Cocoa
 
 echo "Building .app bundle…"
@@ -14,9 +16,11 @@ mkdir -p "$BUNDLE/Contents/MacOS"
 mkdir -p "$BUNDLE/Contents/Resources"
 mv "build/$APP" "$BUNDLE/Contents/MacOS/$APP"
 
-# bundle the state hook so the installed app is self-contained
+# bundle the state hook + updater so the installed app is self-contained
 cp hook.sh "$BUNDLE/Contents/Resources/hook.sh"
 chmod +x "$BUNDLE/Contents/Resources/hook.sh"
+cp update.sh "$BUNDLE/Contents/Resources/update.sh"
+chmod +x "$BUNDLE/Contents/Resources/update.sh"
 
 cat > "$BUNDLE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -26,8 +30,8 @@ cat > "$BUNDLE/Contents/Info.plist" <<EOF
   <key>CFBundleName</key><string>Claude Sessions</string>
   <key>CFBundleDisplayName</key><string>Claude Sessions</string>
   <key>CFBundleIdentifier</key><string>com.christiancannata.claudesessions</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleExecutable</key><string>$APP</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSUIElement</key><true/>
