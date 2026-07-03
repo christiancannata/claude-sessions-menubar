@@ -784,11 +784,11 @@ if CommandLine.arguments.contains("--scan") {
 func demoMockSessions() -> [Session] {
     let home = NSHomeDirectory()
     return [
-        Session(pid: 4821, appName: "WebStorm",
-                appPath: "/Applications/WebStorm.app",
+        Session(pid: 4821, appName: "PhpStorm",
+                appPath: "/Applications/PhpStorm.app",
                 cwd: home + "/projects/checkout-api", state: .waiting,
                 event: nil, tool: nil,
-                message: L.t("Posso eseguire `npm run migrate`?", "Can I run `npm run migrate`?"),
+                message: L.t("Posso eseguire `php artisan migrate`?", "Can I run `php artisan migrate`?"),
                 ts: Date().addingTimeInterval(-8)),
         Session(pid: 3390, appName: "iTerm",
                 appPath: "/Applications/iTerm.app",
@@ -1006,21 +1006,21 @@ if CommandLine.arguments.contains("--demo-hero") {
     scene.present()
 
     let yellow = NSColor.systemYellow, green = NSColor.systemGreen
-    let webstorm = "/Applications/WebStorm.app"
+    let webstorm = "/Applications/PhpStorm.app"
     let iterm    = "/Applications/iTerm.app"
     let term     = "/System/Applications/Utilities/Terminal.app"
 
     let orange = NSColor.systemOrange
     struct Beat { let at: Double; let head: String; let detail: String; let color: NSColor; let app: String; let attention: Bool }
     let seq: [Beat] = [
-        Beat(at: 2.0, head: "WebStorm · ~/checkout-api",
-             detail: L.t("Posso eseguire `npm run migrate`?", "Can I run `npm run migrate`?"),
+        Beat(at: 2.0, head: "PhpStorm · ~/checkout-api",
+             detail: L.t("Posso eseguire `php artisan migrate`?", "Can I run `php artisan migrate`?"),
              color: yellow, app: webstorm, attention: true),
         Beat(at: 3.6, head: "iTerm · ~/blog",
              detail: L.t("ha finito di lavorare", "finished working"),
              color: green, app: iterm, attention: false),
-        // The flagship beat: WebStorm has been blocked waiting for you — it nudges again.
-        Beat(at: 5.2, head: "WebStorm · ~/checkout-api",
+        // The flagship beat: PhpStorm has been blocked waiting for you — it nudges again.
+        Beat(at: 5.2, head: "PhpStorm · ~/checkout-api",
              detail: L.t("⏳ ti aspetta da 3m", "⏳ waiting 3m for you"),
              color: orange, app: webstorm, attention: true),
     ]
@@ -1065,12 +1065,12 @@ if CommandLine.arguments.contains("--demo-toasts") {
     // A curated sequence of good-looking example notifications: they arrive
     // staggered so they stack, showing off both states (needs-you / done).
     struct Demo { let at: Double; let head: String; let detail: String; let color: NSColor; let app: String }
-    let vscode = "/Applications/WebStorm.app"
+    let vscode = "/Applications/PhpStorm.app"
     let iterm  = "/Applications/iTerm.app"
     let term   = "/System/Applications/Utilities/Terminal.app"
     let seq: [Demo] = [
-        Demo(at: 0.6, head: "WebStorm · ~/checkout-api",
-             detail: L.t("Posso eseguire `npm run migrate`?", "Can I run `npm run migrate`?"),
+        Demo(at: 0.6, head: "PhpStorm · ~/checkout-api",
+             detail: L.t("Posso eseguire `php artisan migrate`?", "Can I run `php artisan migrate`?"),
              color: yellow, app: vscode),
         Demo(at: 2.2, head: "iTerm · ~/blog",
              detail: L.t("ha finito di lavorare", "finished working"),
