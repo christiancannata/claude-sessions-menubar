@@ -75,17 +75,22 @@ The bell menu, with every active session, its state and project:
 
 ## Install
 
-Requirements: macOS 12+, **Xcode Command Line Tools** (`xcode-select --install`),
-and **Claude Code**.
-
 ```bash
 bash install.sh
 ```
 
-Builds the app locally, installs it to `~/Applications`, registers the hooks in
-`~/.claude/settings.json` (with a backup, leaving your existing hooks untouched),
-and launches it. Launch-at-login, muting sounds, and nudges are all toggles in the
-bell menu.
+The installer first **checks your prerequisites** and, if one is missing, prints
+the exact command to fix it before doing anything:
+
+- **macOS 12+** (Monterey or newer)
+- **Xcode Command Line Tools** — `swiftc` to build, `python3` for the hooks
+  (`xcode-select --install`)
+- **Claude Code** (the app tracks its sessions)
+
+Then it builds the app locally, installs it to `~/Applications`, registers the
+hooks in `~/.claude/settings.json` (with a backup, leaving your existing hooks
+untouched), and launches it. Launch-at-login, muting sounds, and nudges are all
+toggles in the bell menu.
 
 > Sessions **already open** before install show ⚫️ until you restart them. New
 > sessions are tracked from the start.
