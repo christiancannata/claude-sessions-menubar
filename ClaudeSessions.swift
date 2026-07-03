@@ -235,6 +235,24 @@ func run(_ launchPath: String, _ args: [String]) -> String {
     return String(data: data, encoding: .utf8) ?? ""
 }
 
+// MARK: - Bell icon (shared by the real menu bar and the promo scene)
+
+// Builds the menu-bar bell symbol: white/template when calm, a yellow
+// `bell.badge.fill` when a session needs attention. Reused by the live status
+// button and the --demo-hero promo scene so the two never drift.
+func bellImage(needsAttention: Bool, pointSize: CGFloat) -> NSImage? {
+    let symbolName = needsAttention ? "bell.badge.fill" : "bell.fill"
+    var cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+    if needsAttention {
+        cfg = cfg.applying(.init(hierarchicalColor: .systemYellow))
+    }
+    let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Claude")?
+        .withSymbolConfiguration(cfg)
+    // template = adapts to the menu bar (black/white); non-template keeps the yellow tint.
+    image?.isTemplate = !needsAttention
+    return image
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -248,6 +266,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cachedSessions: [Session] = []
     private var lastStateByPid: [Int: SessionState] = [:]
     private var primed = false
+
+    // Anti-stall escalation: re-nudge a session that stays waiting for you.
+    private var lastNudgeByPid: [Int: Date] = [:]
+    private let nudgeAfter: TimeInterval = 120   // start nudging after 2 min blocked
+    private let nudgeEvery: TimeInterval = 120   // then re-nudge every 2 min
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Single instance: if another copy already owns the menu bar, bow out.
@@ -277,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refresh() {
         cachedSessions = scanner.scan()
         detectTransitions()
+        checkStuckSessions()
         updateStatusButton()
     }
 
@@ -319,6 +343,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if soundsEnabled { playSound(sound) }
     }
 
+    // The flagship: don't just notify once. If a session stays blocked waiting
+    // for you past `nudgeAfter`, re-surface it (orange, "waiting Xm") and keep
+    // nudging every `nudgeEvery` until you act — so nothing sits idle unnoticed.
+    private func checkStuckSessions() {
+        guard nudgeEnabled else { lastNudgeByPid.removeAll(); return }
+        let now = Date()
+        var waitingNow = Set<Int>()
+        for s in cachedSessions where s.state == .waiting {
+            waitingNow.insert(s.pid)
+            guard let since = s.ts else { continue }
+            let waited = now.timeIntervalSince(since)
+            guard waited >= nudgeAfter else { continue }
+            if let last = lastNudgeByPid[s.pid], now.timeIntervalSince(last) < nudgeEvery { continue }
+            let d = compactDuration(Int(waited))
+            notifyUser(headline: "\(s.appName) · \(scanner.prettyPath(s.cwd))",
+                       detail: L.t("⏳ ti aspetta da \(d)", "⏳ waiting \(d) for you"),
+                       color: .systemOrange, sound: "Sosumi", appPath: s.appPath)
+            lastNudgeByPid[s.pid] = now
+        }
+        // drop sessions that are no longer waiting so a future stall re-arms
+        lastNudgeByPid = lastNudgeByPid.filter { waitingNow.contains($0.key) }
+    }
+
     private func playSound(_ name: String) {
         let path = "/System/Library/Sounds/\(name).aiff"
         guard FileManager.default.fileExists(atPath: path) else { return }
@@ -333,16 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let count = cachedSessions.count
         let needsAttention = cachedSessions.contains(where: { $0.state == .waiting })
 
-        let symbolName = needsAttention ? "bell.badge.fill" : "bell.fill"
-        var cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-        if needsAttention {
-            cfg = cfg.applying(.init(hierarchicalColor: .systemYellow))
-        }
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Claude")?
-            .withSymbolConfiguration(cfg)
-        // template = adapts to the menu bar (black/white); non-template keeps the yellow tint.
-        image?.isTemplate = !needsAttention
-        button.image = image
+        button.image = bellImage(needsAttention: needsAttention, pointSize: 13)
         button.imagePosition = count > 0 ? .imageLeft : .imageOnly
         button.imageHugsTitle = true   // pull the number right up against the bell
         if count > 0 {
@@ -357,8 +395,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // A fingerprint of what's shown; drives live rebuilds only on real changes.
     private func signature() -> String {
-        cachedSessions.map { "\($0.pid):\($0.state.rawValue):\($0.cwd):\($0.tool ?? "")" }
-            .joined(separator: "|")
+        let now = Date()
+        return cachedSessions.map {
+            // include a coarse minute bucket so the elapsed timer ticks while the menu is open
+            let mins = $0.ts.map { Int(now.timeIntervalSince($0)) / 60 } ?? 0
+            return "\($0.pid):\($0.state.rawValue):\($0.cwd):\($0.tool ?? ""):\(mins)"
+        }.joined(separator: "|")
     }
 
     // Called right before the menu opens.
@@ -418,9 +460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             // detail submenu
             let sub = NSMenu()
-            var detail = "\(s.state.label)"
+            var detail = s.state.label
             if s.state == .working, let tool = s.tool { detail += " · \(tool)" }
-            if let ts = s.ts { detail += "  (\(relative(ts)))" }
+            if let ts = s.ts { detail += "  ·  \(elapsedPhrase(s.state, since: ts))" }
             let d = NSMenuItem(title: detail, action: nil, keyEquivalent: "")
             d.isEnabled = false
             sub.addItem(d)
@@ -445,6 +487,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         soundsItem.state = soundsEnabled ? .on : .off
         menu.addItem(soundsItem)
 
+        let nudgeItem = NSMenuItem(title: L.t("Solleciti sessioni bloccate", "Nudge stuck sessions"), action: #selector(toggleNudge(_:)), keyEquivalent: "")
+        nudgeItem.target = self
+        nudgeItem.state = nudgeEnabled ? .on : .off
+        menu.addItem(nudgeItem)
+
         let loginItem = NSMenuItem(title: L.t("Avvia al login", "Launch at login"), action: #selector(toggleLogin(_:)), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = loginEnabled ? .on : .off
@@ -460,6 +507,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private var soundsEnabled: Bool {
         !FileManager.default.fileExists(atPath: soundsDisabledURL.path)
+    }
+
+    private var nudgeDisabledURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".claude/session-state/nudge.disabled")
+    }
+    private var nudgeEnabled: Bool {
+        !FileManager.default.fileExists(atPath: nudgeDisabledURL.path)
+    }
+
+    @objc private func toggleNudge(_ sender: NSMenuItem) {
+        let fm = FileManager.default
+        if nudgeEnabled {
+            try? fm.createDirectory(at: nudgeDisabledURL.deletingLastPathComponent(),
+                                    withIntermediateDirectories: true)
+            try? Data().write(to: nudgeDisabledURL)   // create flag -> off
+        } else {
+            try? fm.removeItem(at: nudgeDisabledURL)   // remove flag -> on
+        }
+        sender.state = nudgeEnabled ? .on : .off
     }
 
     @objc private func toggleSounds(_ sender: NSMenuItem) {
@@ -522,6 +589,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return L.t("\(s/3600)h fa", "\(s/3600)h ago")
     }
 
+    // "2m", "1h 5m" — compact, unit-only duration.
+    private func compactDuration(_ s: Int) -> String {
+        let s = max(0, s)
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s/60)m" }
+        return "\(s/3600)h \((s % 3600)/60)m"
+    }
+
+    // Human phrase for how long a session has been in its current state.
+    private func elapsedPhrase(_ state: SessionState, since: Date) -> String {
+        let d = compactDuration(Int(Date().timeIntervalSince(since)))
+        switch state {
+        case .waiting: return L.t("in attesa da \(d)", "waiting \(d)")
+        case .working: return L.t("al lavoro da \(d)", "working for \(d)")
+        case .done:    return L.t("finita \(d) fa", "done \(d) ago")
+        case .unknown: return relative(since)
+        }
+    }
+
     @objc private func activateSession(_ sender: NSMenuItem) {
         guard sender.tag < cachedSessions.count else { return }
         let s = cachedSessions[sender.tag]
@@ -554,6 +640,9 @@ final class ToastManager {
     private let gap: CGFloat = 8
     private let margin: CGFloat = 12
     private let lifetime: TimeInterval = 6
+    // Extra space reserved at the top of the screen before the first toast.
+    // Used by the promo scene so toasts drop below its faux menu bar.
+    var topInset: CGFloat = 0
 
     func show(headline: String, detail: String, accent: NSColor, appPath: String?) {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
@@ -656,7 +745,7 @@ final class ToastManager {
         let vf = screen.visibleFrame
         for (i, panel) in active.enumerated() {
             let x = vf.maxX - width - margin
-            let y = vf.maxY - height - margin - CGFloat(i) * (height + gap)
+            let y = vf.maxY - topInset - height - margin - CGFloat(i) * (height + gap)
             panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true, animate: true)
         }
     }
@@ -744,6 +833,207 @@ func showDemoBackground() {
     w.contentView = v
     w.orderFrontRegardless()
     demoBGWindow = w
+}
+
+// MARK: - Promo hero scene (--demo-hero)
+//
+// A fully self-contained, clutter-free scene for recording the LinkedIn GIF:
+// a branded gradient, a *faux* menu bar (so the real one — with the user's
+// private icons — is cropped out) whose hero is our bell, and the real toasts
+// dropping in below it. The bell reacts (white → yellow badge + glow) exactly
+// like the shipping app, so the "campanella" is unmistakable in-frame.
+final class HeroScene {
+    let window: NSWindow
+    private let bar: NSView
+    private let bellView = NSImageView()
+    private let countView = NSTextField(labelWithString: "3")
+    private let glow = NSView()
+    private let bellClusterRight: CGFloat
+    private let barHeight: CGFloat = 30
+    let barInset: CGFloat            // reserve this at the top for the toasts
+    let crop: (x: Int, y: Int, w: Int, h: Int)
+
+    init(screen: NSScreen) {
+        let frame = screen.frame
+        let vf = screen.visibleFrame
+        let scale = screen.backingScaleFactor
+        barInset = barHeight + 6
+
+        window = NSWindow(contentRect: frame, styleMask: [.borderless],
+                          backing: .buffered, defer: false)
+        window.level = NSWindow.Level(rawValue: 1)   // above desktop, below toasts/menu
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.isOpaque = true
+        window.ignoresMouseEvents = true
+
+        let root = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        root.wantsLayer = true
+        let g = CAGradientLayer()
+        g.frame = root.bounds
+        g.colors = [
+            NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.20, alpha: 1).cgColor,
+            NSColor(calibratedRed: 0.28, green: 0.18, blue: 0.55, alpha: 1).cgColor,
+            NSColor(calibratedRed: 0.49, green: 0.24, blue: 0.62, alpha: 1).cgColor,
+        ]
+        g.startPoint = CGPoint(x: 0, y: 1)
+        g.endPoint = CGPoint(x: 1, y: 0)
+        root.layer?.addSublayer(g)
+
+        // Faux menu bar strip along the top of the visible frame.
+        let barY = vf.maxY - barHeight
+        bar = NSView(frame: NSRect(x: 0, y: barY, width: frame.width, height: barHeight))
+        bar.wantsLayer = true
+        bar.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.30).cgColor
+        let hairline = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: 1))
+        hairline.wantsLayer = true
+        hairline.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        bar.addSubview(hairline)
+        root.addSubview(bar)
+
+        let mid = barHeight / 2
+
+        func fauxIcon(_ name: String, _ pt: CGFloat) -> NSImage? {
+            let cfg = NSImage.SymbolConfiguration(pointSize: pt, weight: .regular)
+            let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(cfg)
+            img?.isTemplate = true
+            return img
+        }
+
+        // Right cluster, laid out right-to-left: clock, control centre, battery, wifi.
+        var rx = frame.width - 18
+        let clock = NSTextField(labelWithString: L.t("mer 3 lug  9:41", "Wed Jul 3  9:41"))
+        clock.font = .systemFont(ofSize: 13, weight: .regular)
+        clock.textColor = NSColor.white.withAlphaComponent(0.95)
+        clock.isBezeled = false; clock.drawsBackground = false; clock.isEditable = false
+        clock.sizeToFit()
+        clock.setFrameOrigin(NSPoint(x: rx - clock.frame.width, y: mid - clock.frame.height / 2))
+        bar.addSubview(clock)
+        rx -= clock.frame.width + 16
+
+        for (name, pt) in [("switch.2", 15.0), ("battery.100", 13.0), ("wifi", 13.0)] {
+            let iv = NSImageView()
+            iv.image = fauxIcon(name, pt)
+            iv.contentTintColor = NSColor.white.withAlphaComponent(0.9)
+            let sz = iv.image?.size ?? NSSize(width: 16, height: 12)
+            iv.frame = NSRect(x: rx - sz.width, y: mid - sz.height / 2, width: sz.width, height: sz.height)
+            bar.addSubview(iv)
+            rx -= sz.width + 15
+        }
+
+        // Our bell + count, the hero of the cluster (leftmost, right edge fixed at rx).
+        bellClusterRight = rx
+        glow.wantsLayer = true
+        glow.layer?.cornerRadius = 11
+        bar.addSubview(glow)
+        countView.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        countView.isBezeled = false; countView.drawsBackground = false; countView.isEditable = false
+        bar.addSubview(bellView)
+        bar.addSubview(countView)
+
+        window.contentView = root
+
+        // Crop rect (retina px, top-left origin) framing the bell + the toast column.
+        let toastLeft = vf.maxX - 360 - 12
+        let cropLeft = min(toastLeft, bellClusterRight - 40) - 22
+        let cropTopScreen = frame.height - vf.maxY          // real menu bar height
+        let cropH = barHeight + 6 + 12 + 3 * 76 + 2 * 8 + 26
+        func ev(_ v: CGFloat) -> Int { let n = Int((v * scale).rounded()); return n - (n % 2) }
+        crop = (x: ev(cropLeft),
+                y: ev(cropTopScreen),
+                w: ev(frame.width - cropLeft),
+                h: ev(cropH))
+
+        setBell(needsAttention: false, pulse: false)
+    }
+
+    func present() { window.orderFrontRegardless() }
+
+    // Re-render the bell for the given state, keeping its cluster right-aligned so
+    // the wider `bell.badge.fill` doesn't shove the layout around.
+    func setBell(needsAttention: Bool, pulse: Bool) {
+        guard let img = bellImage(needsAttention: needsAttention, pointSize: 15) else { return }
+        bellView.image = img
+        bellView.contentTintColor = needsAttention ? nil : .white
+        let mid = barHeight / 2
+        let bw = img.size.width, bh = img.size.height
+        countView.textColor = needsAttention
+            ? .systemYellow : NSColor.white.withAlphaComponent(0.95)
+        countView.sizeToFit()
+        let cw = countView.frame.width, ch = countView.frame.height
+        let cx = bellClusterRight - cw
+        let bx = cx - 3 - bw
+        bellView.frame = NSRect(x: bx, y: mid - bh / 2, width: bw, height: bh)
+        countView.frame = NSRect(x: cx, y: mid - ch / 2, width: cw, height: ch)
+        glow.frame = NSRect(x: bx - 8, y: mid - 12, width: (bellClusterRight - bx) + 14, height: 24)
+        glow.layer?.backgroundColor = needsAttention
+            ? NSColor.systemYellow.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
+
+        if pulse {
+            let a = CABasicAnimation(keyPath: "transform.scale")
+            a.fromValue = 0.7; a.toValue = 1.0
+            a.duration = 0.35; a.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            bellView.layer?.add(a, forKey: "pulse")
+            let ga = CABasicAnimation(keyPath: "opacity")
+            ga.fromValue = 0.0; ga.toValue = 1.0; ga.duration = 0.35
+            glow.layer?.add(ga, forKey: "glowIn")
+        }
+    }
+}
+
+// `--hero-crop`: print the promo crop rect (retina px) for the recording script.
+if CommandLine.arguments.contains("--hero-crop") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    guard let screen = NSScreen.main else { print("CROP 0 0 0 0"); exit(1) }
+    let scene = HeroScene(screen: screen)
+    print("CROP \(scene.crop.x) \(scene.crop.y) \(scene.crop.w) \(scene.crop.h)")
+    exit(0)
+}
+
+// `--demo-hero`: the LinkedIn hero clip. Branded background + faux menu bar with
+// a reacting bell + the real toast sequence, all cropped clean of the real desktop.
+if CommandLine.arguments.contains("--demo-hero") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    guard let screen = NSScreen.main else { exit(1) }
+    let scene = HeroScene(screen: screen)
+    let mgr = ToastManager()
+    mgr.topInset = scene.barInset
+    print("CROP \(scene.crop.x) \(scene.crop.y) \(scene.crop.w) \(scene.crop.h)")
+    fflush(stdout)
+
+    scene.present()
+
+    let yellow = NSColor.systemYellow, green = NSColor.systemGreen
+    let webstorm = "/Applications/WebStorm.app"
+    let iterm    = "/Applications/iTerm.app"
+    let term     = "/System/Applications/Utilities/Terminal.app"
+
+    let orange = NSColor.systemOrange
+    struct Beat { let at: Double; let head: String; let detail: String; let color: NSColor; let app: String; let attention: Bool }
+    let seq: [Beat] = [
+        Beat(at: 2.0, head: "WebStorm · ~/checkout-api",
+             detail: L.t("Posso eseguire `npm run migrate`?", "Can I run `npm run migrate`?"),
+             color: yellow, app: webstorm, attention: true),
+        Beat(at: 3.6, head: "iTerm · ~/blog",
+             detail: L.t("ha finito di lavorare", "finished working"),
+             color: green, app: iterm, attention: false),
+        // The flagship beat: WebStorm has been blocked waiting for you — it nudges again.
+        Beat(at: 5.2, head: "WebStorm · ~/checkout-api",
+             detail: L.t("⏳ ti aspetta da 3m", "⏳ waiting 3m for you"),
+             color: orange, app: webstorm, attention: true),
+    ]
+    _ = term
+    for b in seq {
+        DispatchQueue.main.asyncAfter(deadline: .now() + b.at) {
+            mgr.show(headline: b.head, detail: b.detail, accent: b.color, appPath: b.app)
+            if b.attention { scene.setBell(needsAttention: true, pulse: true) }
+        }
+    }
+    Timer.scheduledTimer(withTimeInterval: 14, repeats: false) { _ in NSApp.terminate(nil) }
+    app.run()
+    exit(0)
 }
 
 // `--demo-menu`: show the bell with a badge and drop the menu open, then wait

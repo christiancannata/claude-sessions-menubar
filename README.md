@@ -1,61 +1,94 @@
-# Claude Sessions — menu bar
+# Claude Sessions
+
+**Every Claude Code session in your menu bar — and it won't let one sit blocked waiting for you.**
+
+![macOS 12+](https://img.shields.io/badge/macOS-12%2B-black?logo=apple)
+![Swift](https://img.shields.io/badge/Swift-single%20file-orange?logo=swift&logoColor=white)
+![No network](https://img.shields.io/badge/network-none-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 A native macOS menu-bar app (no Dock icon) that shows every running **Claude Code**
-session, which app/IDE it runs in, which project it's working on, and **what it's
-doing right now**.
+session at a glance: which app or IDE it runs in, which project it's on, and
+**what it's doing right now**. When one finishes or needs you, a clickable toast
+drops in. When one gets *stuck* waiting for you, it comes back until you deal with it.
 
-![Claude Sessions notifications](press/notifications.gif)
+![Claude Sessions in action](press/hero.gif)
 
-When a session **finishes** or **needs you**, a clickable **toast** appears in the
-top-right corner (app icon + project + what it's asking) with a sound. Click the
-toast to bring that session to the front.
+---
 
-- 🟢 **working** (generating or running tools)
-- 🟡 **waiting for you** (permission / confirmation / input)
-- ⚪️ **done** (ready for the next prompt)
-- ⚫️ unknown (session started before the hooks were installed)
+## The part other monitors skip
+
+Plenty of tools ping you **once** when Claude wants permission. That's not the
+problem. The problem is what happens next: you kick off a long task, step away,
+and 30 seconds later it hits a permission prompt and just… **sits there, blocked,
+for twenty minutes** while you're in a call.
+
+So this one doesn't stop at the first ping. If a session stays **waiting for you**
+past a couple of minutes, it **nudges you again** — an orange *"⏳ waiting 3m for
+you"* toast with a more insistent sound — and keeps reminding you until you act.
+Nothing rots on your watch. Toggle it any time from the bell menu
+(**Nudge stuck sessions**).
+
+## What you get
+
+- 🔔 **One glance, every session** — host app icon, project, live state, all in the menu bar.
+- 🪟 clickable **toasts that survive a broken Notification Center** — rendered by the app itself (NSPanel), so they show even when macOS notifications are disabled or misbehaving. Click one to bring that session to the front.
+- ⏱️ **Live timers** — *working for 2m*, *waiting 5m*, right in the menu.
+- 🟠 **Anti-stall nudges** — the flagship above: no blocked session goes unnoticed.
+- 🔊 **A distinct sound per event** — tell them apart without looking. Mutable.
+- 🔒 **Zero network, zero telemetry, one Swift file** — compiled on your own Mac, fully auditable, MIT.
+
+## States
+
+- 🟢 **working** — generating or running tools
+- 🟡 **waiting for you** — permission / confirmation / input
+- ⚪️ **done** — ready for the next prompt
+- ⚫️ **unknown** — session started before the hooks were installed
 
 ## Sounds
 
-Notifications play a distinct system sound per event, so you can tell them apart
-without looking:
+Each event plays a different built-in macOS sound so you can read the situation
+with your ears:
 
-- 🟡 **waiting for you** → `Submarine`
-- 🟢 **done** → `Glass`
+| Event | Sound |
+|-------|-------|
+| 🟡 waiting for you | `Submarine` |
+| 🟢 done | `Glass` |
+| 🟠 still waiting (nudge) | `Sosumi` |
 
-Sounds can be muted anytime from the bell menu (**Notification sounds**); the
-toasts keep working silently. They use built-in macOS sounds
-(`/System/Library/Sounds`) played via `afplay` — nothing is bundled or downloaded.
+Mute them any time from the bell menu (**Notification sounds**) — the toasts keep
+working silently. Sounds come from `/System/Library/Sounds` via `afplay`; nothing
+is bundled or downloaded.
 
 ## Preview
 
-A single notification, when a session asks for permission:
+A session asking for permission:
 
 ![A session asking for permission](press/notification-waiting.png)
 
-The bell menu lists every active session, with its state and project:
+The bell menu, with every active session, its state and project:
 
 ![Menu listing the active sessions](press/menu.png)
 
-> The app follows the Mac's system language (**Italian** or **English**).
-> You can force it with `--lang=it` / `--lang=en`.
+> Follows your Mac's language (**Italian** or **English**). Force it with
+> `--lang=it` / `--lang=en`.
 
 ## Install
 
 Requirements: macOS 12+, **Xcode Command Line Tools** (`xcode-select --install`),
-and of course **Claude Code**.
+and **Claude Code**.
 
 ```bash
 bash install.sh
 ```
 
-The script builds the app locally, installs it to `~/Applications`, registers the
-hooks in `~/.claude/settings.json` (with a backup, leaving existing hooks
-untouched), and launches it. Launch-at-login and muting sounds are toggled from
-the bell menu.
+Builds the app locally, installs it to `~/Applications`, registers the hooks in
+`~/.claude/settings.json` (with a backup, leaving your existing hooks untouched),
+and launches it. Launch-at-login, muting sounds, and nudges are all toggles in the
+bell menu.
 
-> Claude sessions **already open** before installation show ⚫️ until you restart
-> them. New sessions are tracked from the start.
+> Sessions **already open** before install show ⚫️ until you restart them. New
+> sessions are tracked from the start.
 
 ### Uninstall
 
@@ -63,35 +96,34 @@ the bell menu.
 bash uninstall.sh
 ```
 
-Removes the app, the login item, and our hooks (with a backup of settings.json).
+Removes the app, the login item, and our hooks (with a backup of `settings.json`).
 
 ## Security — what it does and does NOT do
 
-Everything is inspectable in the source (`ClaudeSessions.swift`, `hook.sh`). In short:
+Everything is inspectable in the source (`ClaudeSessions.swift`, `hook.sh`):
 
 - **No network, no telemetry, no `sudo`.** Runs as a normal user.
-- **What it reads**: the process list (`ps`) and each session's working directory
-  (`lsof`), to figure out the host app and project.
-- **What it writes**: state files in `~/.claude/session-state/` (one per session)
-  and the hooks in `~/.claude/settings.json` (with an automatic backup).
+- **Reads**: the process list (`ps`) and each session's working directory (`lsof`),
+  to figure out the host app and project.
+- **Writes**: state files in `~/.claude/session-state/` (one per session) and the
+  hooks in `~/.claude/settings.json` (with an automatic backup).
 - **Built locally**: no third-party binaries, no Gatekeeper "unidentified
-  developer" warning (the app is compiled on your own Mac).
-- **System tools** are invoked with absolute paths (`/bin/ps`, `/usr/sbin/lsof`,
+  developer" warning — it's compiled on your own Mac.
+- **System tools** are called with absolute paths (`/bin/ps`, `/usr/sbin/lsof`,
   `/usr/bin/afplay`, `/bin/launchctl`).
 
-## How it works (technical)
+## How it works
 
 1. **Sessions + host app** (`ClaudeSessions.swift`): finds the `claude` processes
    and walks up the parents to the first `.app` bundle (handling VS Code/Cursor's
    nested Electron helpers). Works with iTerm, Terminal, JetBrains, VS Code,
-   Cursor, Windsurf, Zed, Warp, Ghostty, etc.
-2. **State** (`hook.sh`): each session writes its own state on the
+   Cursor, Windsurf, Zed, Warp, Ghostty, and more.
+2. **State** (`hook.sh`): each session writes its own state on
    UserPromptSubmit/Pre/PostToolUse (working), Notification (waiting), Stop (done),
-   and SessionEnd (removed) events. For `Notification` it turns yellow **only** for
-   real requests (`notification_type` permission/elicit/approval), not for idle.
-3. **Notifications**: handled by the app as **in-app toasts** (NSPanel), not via
-   the macOS Notification Center — so they work even if that's disabled or broken.
-   Clicking a toast brings the session to the front.
+   and SessionEnd (removed). On `Notification` it only turns yellow for **real**
+   requests (`notification_type` permission/elicit/approval), never for idle pings.
+3. **Notifications & nudges**: the app polls state every ~2s, renders in-app toasts,
+   and re-surfaces any session that stays blocked past the threshold.
 
 ### Debug
 
@@ -108,23 +140,24 @@ READMEs, Product Hunt, etc.):
 
 | File | What it shows |
 |------|---------------|
-| `press/notifications.gif` | Toasts arriving in sequence |
+| `press/hero.gif` / `press/hero.mp4` | The full sequence: sessions, toasts, and an anti-stall nudge |
 | `press/notification-waiting.png` | A single "needs you" notification |
 | `press/menu.png` | The menu with the active sessions |
 
-Regenerate them locally with the app's demo modes (fake sessions, branded
+Regenerate them locally from the app's demo modes (fake sessions, branded
 backdrop, no real data):
 
 ```bash
-ClaudeSessions --demo-menu   --lang=en   # opens the menu with sample sessions
-ClaudeSessions --demo-toasts --lang=en   # plays the notification sequence
+bash press/record-hero.sh en          # records press/hero.gif + hero.mp4
+ClaudeSessions --demo-menu   --lang=en # opens the menu with sample sessions
+ClaudeSessions --demo-toasts --lang=en # plays the notification sequence
 ```
 
 ## Windows / other platforms
 
-This app is macOS-only, but the design splits cleanly into a platform-agnostic
-**state-file contract** and a thin platform-specific tray/toast shell. A Windows
-(or Linux) client is a realistic weekend project — **contributions are welcome**.
+macOS-only, but the design splits cleanly into a platform-agnostic **state-file
+contract** and a thin platform-specific tray/toast shell. A Windows (or Linux)
+client is a realistic weekend project — **contributions welcome**.
 
 See **[PORTING.md](PORTING.md)** for the full spec: the JSON state contract, the
 hook event → state mapping, and a macOS → Windows API mapping table.
@@ -132,8 +165,8 @@ hook event → state mapping, and a macOS → Windows API mapping table.
 ## Known limitations
 
 - **tmux**: a session started inside tmux shows up as "Terminal" (the tmux server
-  is detached from launchd). States and toasts still work.
+  is detached from launchd). States, toasts, and nudges still work.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see [`LICENSE`](LICENSE).
