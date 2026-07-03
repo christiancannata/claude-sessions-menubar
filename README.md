@@ -89,8 +89,19 @@ the exact command to fix it before doing anything:
 
 Then it builds the app locally, installs it to `~/Applications`, registers the
 hooks in `~/.claude/settings.json` (with a backup, leaving your existing hooks
-untouched), and launches it. Launch-at-login, muting sounds, and nudges are all
-toggles in the bell menu.
+untouched), and launches it.
+
+Everything is configurable from the bell menu:
+
+- **Notification sounds** — mute all sounds (toasts keep working).
+- **Nudge stuck sessions** — the anti-stall re-reminders.
+- **Notify on completion** — turn the 🟢 *"finished working"* notification on or
+  off, independently, so you can keep the *"needs you"* alerts but silence the
+  done ones (or vice-versa).
+- **Indicator** — what the number next to the bell shows: *Total sessions*
+  (default), *Only "needs you"*, *Active · waiting* (e.g. `2·1`), or *Hidden* for
+  a clean bell with no number.
+- **Launch at login**.
 
 > Sessions **already open** before install show ⚫️ until you restart them. New
 > sessions are tracked from the start.
@@ -185,7 +196,10 @@ clobbers your other hooks, and the **versioning + updater** path works end-to-en
 `build.sh` stamps the [`VERSION`](VERSION) into the bundle and ships the updater,
 the version-compare logic is numeric (`1.10 > 1.9`), and `update.sh` clones,
 rebuilds, and installs a new version against a local fake remote (no network).
-Run it before opening a PR.
+It also covers the **config** surface: every indicator mode renders the right
+label, and the completion toggle suppresses the 🟢 notification while still
+letting *"needs you"* through (and never false-fires on a fresh session). Run it
+before opening a PR.
 
 ## Promo assets
 

@@ -182,6 +182,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+sect "6. Config: indicator modes + completion toggle"
+if [ -x "$BIN" ]; then
+  # indicator label per mode (brackets make the empty label visible)
+  [ "$("$BIN" --indicator total 3 2 1)" = "[3]" ]        && ok "indicator total -> 3"            || no "indicator total wrong: $("$BIN" --indicator total 3 2 1)"
+  [ "$("$BIN" --indicator waiting 3 2 1)" = "[1]" ]      && ok "indicator waiting -> 1"          || no "indicator waiting wrong"
+  [ "$("$BIN" --indicator waiting 3 2 0)" = "[]" ]       && ok "indicator waiting hides at 0"    || no "indicator waiting should be empty"
+  [ "$("$BIN" --indicator activeWaiting 3 2 1)" = "[2·1]" ] && ok "indicator activeWaiting -> 2·1" || no "indicator activeWaiting wrong"
+  [ "$("$BIN" --indicator hidden 3 2 1)" = "[]" ]        && ok "indicator hidden -> empty"       || no "indicator hidden should be empty"
+  [ "$("$BIN" --indicator total 0 0 0)" = "[]" ]         && ok "indicator empty when no sessions" || no "indicator should be empty at 0"
+
+  # completion toggle: 3rd arg = completionEnabled (1 on / 0 off)
+  [ "$("$BIN" --notify working done 1)" = "completion" ] && ok "completion ON: working->done notifies" || no "expected completion, got $("$BIN" --notify working done 1)"
+  [ "$("$BIN" --notify done waiting 1)" = "waiting" ]    && ok "waiting notification independent of toggle" || no "expected waiting"
+  [ "$("$BIN" --notify working working 1)" = "none" ]    && ok "no notification without a transition" || no "expected none"
+  [ "$("$BIN" --notify working done 0)" = "none" ]       && ok "completion OFF: working->done stays silent" || no "toggle ignored: $("$BIN" --notify working done 0)"
+  [ "$("$BIN" --notify done waiting 0)" = "waiting" ]    && ok "toggle OFF still lets 'needs you' through" || no "waiting suppressed by mistake"
+  # a brand-new session appearing as done (prev=nil) must NOT fire completion
+  [ "$("$BIN" --notify nil done 1)" = "none" ]           && ok "new session (nil->done) doesn't false-notify" || no "false completion on session start"
+else
+  no "no binary for config tests"
+fi
+
+# ---------------------------------------------------------------------------
 sect "Result"
 printf "  %d passed, %d failed\n\n" "$PASS" "$FAIL"
 if [ "$FAIL" -eq 0 ]; then printf "\033[32mAll good ✅\033[0m\n"; exit 0

@@ -63,6 +63,23 @@ enum SessionState: String {
     }
 }
 
+// What the number next to the bell shows. Persisted in UserDefaults.
+enum IndicatorMode: String, CaseIterable {
+    case total          // all sessions (default, original behaviour)
+    case waiting        // only sessions that need you
+    case activeWaiting  // working·waiting
+    case hidden         // no number, just the bell
+
+    var label: String {
+        switch self {
+        case .total:         return L.t("Totale sessioni", "Total sessions")
+        case .waiting:        return L.t("Solo “in attesa”", "Only “needs you”")
+        case .activeWaiting:  return L.t("Attive · in attesa", "Active · waiting")
+        case .hidden:         return L.t("Nascosto", "Hidden")
+        }
+    }
+}
+
 struct Session {
     let pid: Int
     let appName: String
@@ -235,6 +252,27 @@ func run(_ launchPath: String, _ args: [String]) -> String {
     return String(data: data, encoding: .utf8) ?? ""
 }
 
+// The number rendered next to the bell for a given indicator mode + counts.
+// Free function so both updateStatusButton and the `--indicator` CLI test share it.
+func indicatorLabel(_ mode: IndicatorMode, total: Int, working: Int, waiting: Int) -> String {
+    switch mode {
+    case .total:         return total > 0 ? "\(total)" : ""
+    case .waiting:        return waiting > 0 ? "\(waiting)" : ""
+    case .activeWaiting:  return total > 0 ? "\(working)·\(waiting)" : ""
+    case .hidden:         return ""
+    }
+}
+
+// Which notification (if any) a state transition should raise. Pure + shared by
+// detectTransitions and the `--notify` CLI test so the completion toggle is covered.
+enum PendingNotification: String { case none, waiting, completion }
+func pendingNotification(prev: SessionState?, current: SessionState,
+                         completionEnabled: Bool) -> PendingNotification {
+    if current == .waiting && prev != .waiting { return .waiting }
+    if current == .done && prev == .working && completionEnabled { return .completion }
+    return .none
+}
+
 // Compare dotted-integer versions: true if `remote` is strictly newer than `local`.
 // Free function so both the app's updater and the `--vercmp` CLI test share it.
 func versionIsNewer(_ remote: String, than local: String) -> Bool {
@@ -340,13 +378,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for s in cachedSessions {
             let prev = lastStateByPid[s.pid]
             let headline = "\(s.appName) · \(scanner.prettyPath(s.cwd))"
-            if s.state == .waiting && prev != .waiting {
+            switch pendingNotification(prev: prev, current: s.state, completionEnabled: completionEnabled) {
+            case .waiting:
                 notifyUser(headline: headline,
                            detail: s.message ?? L.t("ti sta chiedendo qualcosa", "is asking you something"),
                            color: .systemYellow, sound: "Submarine", appPath: s.appPath)
-            } else if s.state == .done && prev == .working {
+            case .completion:
                 notifyUser(headline: headline, detail: L.t("ha finito di lavorare", "finished working"),
                            color: .systemGreen, sound: "Glass", appPath: s.appPath)
+            case .none:
+                break
             }
         }
         lastStateByPid = current
@@ -391,19 +432,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        let count = cachedSessions.count
-        let needsAttention = cachedSessions.contains(where: { $0.state == .waiting })
+        let total = cachedSessions.count
+        let waiting = cachedSessions.filter { $0.state == .waiting }.count
+        let working = cachedSessions.filter { $0.state == .working }.count
+        let needsAttention = waiting > 0
+
+        // Build the label according to the chosen indicator mode.
+        let label = indicatorLabel(indicatorMode, total: total, working: working, waiting: waiting)
 
         button.image = bellImage(needsAttention: needsAttention, pointSize: 13)
-        button.imagePosition = count > 0 ? .imageLeft : .imageOnly
+        button.imagePosition = label.isEmpty ? .imageOnly : .imageLeft
         button.imageHugsTitle = true   // pull the number right up against the bell
-        if count > 0 {
+        if label.isEmpty {
+            button.title = ""
+        } else {
             let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
             button.attributedTitle = NSAttributedString(
-                string: "\(count)",
+                string: label,
                 attributes: [.font: font, .baselineOffset: 4])
-        } else {
-            button.title = ""
         }
     }
 
@@ -453,7 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             headerTitle = L.t("Nessuna sessione Claude attiva", "No active Claude sessions")
         } else {
             headerTitle = L.t(
-                "Claude — \(n) sessione\(n == 1 ? "" : "i") attiv\(n == 1 ? "a" : "e")",
+                "Claude — \(n) session\(n == 1 ? "e" : "i") attiv\(n == 1 ? "a" : "e")",
                 "Claude — \(n) active session\(n == 1 ? "" : "s")")
         }
         let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
@@ -506,6 +552,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nudgeItem.state = nudgeEnabled ? .on : .off
         menu.addItem(nudgeItem)
 
+        let doneItem = NSMenuItem(title: L.t("Avvisa al completamento", "Notify on completion"), action: #selector(toggleCompletion(_:)), keyEquivalent: "")
+        doneItem.target = self
+        doneItem.state = completionEnabled ? .on : .off
+        menu.addItem(doneItem)
+
+        // Indicator submenu: what the number next to the bell shows.
+        let indicatorItem = NSMenuItem(title: L.t("Indicatore", "Indicator"), action: nil, keyEquivalent: "")
+        let indicatorSub = NSMenu()
+        for mode in IndicatorMode.allCases {
+            let mi = NSMenuItem(title: mode.label, action: #selector(setIndicatorMode(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = mode.rawValue
+            mi.state = (mode == indicatorMode) ? .on : .off
+            indicatorSub.addItem(mi)
+        }
+        indicatorItem.submenu = indicatorSub
+        menu.addItem(indicatorItem)
+
         let loginItem = NSMenuItem(title: L.t("Avvia al login", "Launch at login"), action: #selector(toggleLogin(_:)), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = loginEnabled ? .on : .off
@@ -544,6 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // once per day so we don't hit GitHub (or nag) on every relaunch.
     private let lastUpdateCheckKey = "lastAutoUpdateCheck"
     private func autoCheckForUpdatesIfDue() {
+        if demoSessions != nil { return }   // never in demo/press captures
         let now = Date().timeIntervalSince1970
         let last = UserDefaults.standard.double(forKey: lastUpdateCheckKey)
         if now - last < 24 * 60 * 60 { return }           // less than a day ago
@@ -652,6 +717,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try? fm.removeItem(at: nudgeDisabledURL)   // remove flag -> on
         }
         sender.state = nudgeEnabled ? .on : .off
+    }
+
+    // Toggle the "finished working" notification (toast + sound) on completion.
+    private var completionDisabledURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".claude/session-state/completion.disabled")
+    }
+    private var completionEnabled: Bool {
+        !FileManager.default.fileExists(atPath: completionDisabledURL.path)
+    }
+
+    @objc private func toggleCompletion(_ sender: NSMenuItem) {
+        let fm = FileManager.default
+        if completionEnabled {
+            try? fm.createDirectory(at: completionDisabledURL.deletingLastPathComponent(),
+                                    withIntermediateDirectories: true)
+            try? Data().write(to: completionDisabledURL)   // create flag -> off
+        } else {
+            try? fm.removeItem(at: completionDisabledURL)   // remove flag -> on
+        }
+        sender.state = completionEnabled ? .on : .off
+    }
+
+    // Which counter shows next to the bell (persisted).
+    private var indicatorMode: IndicatorMode {
+        get { IndicatorMode(rawValue: UserDefaults.standard.string(forKey: "indicatorMode") ?? "") ?? .total }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "indicatorMode") }
+    }
+
+    @objc private func setIndicatorMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = IndicatorMode(rawValue: raw) else { return }
+        indicatorMode = mode
+        // reflect the selection across the sibling items
+        sender.menu?.items.forEach { $0.state = ($0 === sender) ? .on : .off }
+        updateStatusButton()
     }
 
     @objc private func toggleSounds(_ sender: NSMenuItem) {
@@ -899,6 +1000,34 @@ if let i = CommandLine.arguments.firstIndex(of: "--vercmp") {
         FileHandle.standardError.write(Data("usage: --vercmp <A> <B>\n".utf8)); exit(2)
     }
     print(versionIsNewer(args[i + 1], than: args[i + 2]) ? "newer" : "not-newer")
+    exit(0)
+}
+
+// `--indicator <mode> <total> <working> <waiting>`: prints the bell label.
+// Used by test.sh to exercise the indicator-mode logic without a menu bar.
+if let i = CommandLine.arguments.firstIndex(of: "--indicator") {
+    let a = CommandLine.arguments
+    guard i + 4 < a.count, let mode = IndicatorMode(rawValue: a[i + 1]),
+          let t = Int(a[i + 2]), let w = Int(a[i + 3]), let q = Int(a[i + 4]) else {
+        FileHandle.standardError.write(Data("usage: --indicator <total|waiting|activeWaiting|hidden> <total> <working> <waiting>\n".utf8)); exit(2)
+    }
+    // print in brackets so an empty label is visible in test output
+    print("[\(indicatorLabel(mode, total: t, working: w, waiting: q))]")
+    exit(0)
+}
+
+// `--notify <prev> <current> <completionEnabled 0|1>`: prints which notification
+// the transition raises (none|waiting|completion). Exercises the completion-toggle
+// decision that backs "Notify on completion".
+if let i = CommandLine.arguments.firstIndex(of: "--notify") {
+    let a = CommandLine.arguments
+    guard i + 3 < a.count else {
+        FileHandle.standardError.write(Data("usage: --notify <prev|nil> <current> <0|1>\n".utf8)); exit(2)
+    }
+    let prev = SessionState(rawValue: a[i + 1])   // nil if "nil"/unknown token
+    let current = SessionState(rawValue: a[i + 2]) ?? .unknown
+    let completionEnabled = (a[i + 3] != "0")
+    print(pendingNotification(prev: prev, current: current, completionEnabled: completionEnabled).rawValue)
     exit(0)
 }
 
