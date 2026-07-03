@@ -133,6 +133,20 @@ Everything is inspectable in the source (`ClaudeSessions.swift`, `hook.sh`):
 
 Prints the detected sessions and their state without touching the menu bar.
 
+### Tests
+
+A tiny, dependency-free smoke test (pure bash + python3, everything sandboxed in
+a throwaway `$HOME`, so your real config is never touched):
+
+```bash
+bash test.sh
+```
+
+It checks that the app compiles with no errors *or warnings*, the CLI modes run,
+`hook.sh` writes the state-file contract correctly (including odd characters in
+messages), and `install-hooks.sh` registers every event, stays idempotent, and
+never clobbers your other hooks. Run it before opening a PR.
+
 ## Promo assets
 
 The README's assets live in [`press/`](press/) and are free to reuse (posts,
