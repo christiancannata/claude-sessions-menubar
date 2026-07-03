@@ -60,8 +60,17 @@ ok "installata v$NEWV in $DEST/$APPNAME"
 # 4) riavvia -------------------------------------------------------------
 echo; bold "4/4  Riavvio l'app"
 if [ "${CS_LAUNCH:-1}" = "1" ]; then
-  open "$DEST/$APPNAME"
-  ok "Claude Sessions aggiornata e riavviata (v$NEWV)"
+  # Launch Services può restituire -600 subito dopo il quit: riprova qualche volta.
+  launched=0
+  for _ in 1 2 3 4 5; do
+    if open "$DEST/$APPNAME" 2>/dev/null; then launched=1; break; fi
+    sleep 1
+  done
+  if [ "$launched" = "1" ]; then
+    ok "Claude Sessions aggiornata e riavviata (v$NEWV)"
+  else
+    ok "aggiornata a v$NEWV — riaprila da ~/Applications se non è ripartita"
+  fi
 else
   ok "riavvio saltato (CS_LAUNCH=0)"
 fi
