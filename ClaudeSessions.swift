@@ -173,7 +173,7 @@ final class SessionScanner {
             var s = Substring(raw)
             s = s.drop(while: { $0 == " " })
             guard let sp1 = s.firstIndex(of: " "), let pid = Int(s[..<sp1]) else { continue }
-            var rest = s[s.index(after: sp1)...].drop(while: { $0 == " " })
+            let rest = s[s.index(after: sp1)...].drop(while: { $0 == " " })
             guard let sp2 = rest.firstIndex(of: " "), let ppid = Int(rest[..<sp2]) else { continue }
             let command = String(rest[rest.index(after: sp2)...].drop(while: { $0 == " " }))
             result.append(ProcInfo(pid: pid, ppid: ppid, command: command))
