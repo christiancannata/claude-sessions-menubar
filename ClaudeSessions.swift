@@ -665,6 +665,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = info
+        // The app ships no .icns, so the default alert icon is the generic app
+        // placeholder. Use our own bell instead — branded and never "missing".
+        alert.icon = bellImage(needsAttention: false, pointSize: 44)
         if offerUpdate {
             alert.addButton(withTitle: L.t("Aggiorna", "Update"))
             alert.addButton(withTitle: L.t("Più tardi", "Later"))
