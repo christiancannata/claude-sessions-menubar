@@ -44,6 +44,9 @@ Nothing rots on your watch. Toggle it any time from the bell menu
 - 🟡 **waiting for you** — permission / confirmation / input
 - ⚪️ **done** — ready for the next prompt
 - ⚫️ **unknown** — session started before the hooks were installed
+- 🧟 **orphaned** — you closed the terminal while it was waiting, so `claude` got
+  reparented to launchd and is stuck for good. It no longer nudges you; open its
+  submenu and pick **Terminate orphaned session** to reap the process and clear its state.
 
 ## Sounds
 

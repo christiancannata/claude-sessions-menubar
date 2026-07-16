@@ -33,32 +33,36 @@ enum SessionState: String {
     case waiting   // Claude is asking something / needs permission
     case done      // finished, ready for next prompt
     case unknown   // no state file yet (hooks not active for this session)
+    case orphaned  // terminal closed while waiting: reparented to launchd, stuck for good
 
     var dot: String {
         switch self {
-        case .working: return "🟢"
-        case .waiting: return "🟡"
-        case .done:    return "⚪️"
-        case .unknown: return "⚫️"
+        case .working:  return "🟢"
+        case .waiting:  return "🟡"
+        case .done:     return "⚪️"
+        case .unknown:  return "⚫️"
+        case .orphaned: return "🧟"
         }
     }
 
     var label: String {
         switch self {
-        case .working: return L.t("sta lavorando", "working")
-        case .waiting: return L.t("ti sta chiedendo qualcosa", "waiting for you")
-        case .done:    return L.t("ha finito", "done")
-        case .unknown: return L.t("stato sconosciuto", "unknown")
+        case .working:  return L.t("sta lavorando", "working")
+        case .waiting:  return L.t("ti sta chiedendo qualcosa", "waiting for you")
+        case .done:     return L.t("ha finito", "done")
+        case .unknown:  return L.t("stato sconosciuto", "unknown")
+        case .orphaned: return L.t("orfana · terminale chiuso", "orphaned · terminal closed")
         }
     }
 
-    // ordering for menu-bar attention: waiting > working > done > unknown
+    // ordering for menu-bar attention: waiting > working > done > unknown > orphaned
     var priority: Int {
         switch self {
-        case .waiting: return 3
-        case .working: return 2
-        case .done:    return 1
-        case .unknown: return 0
+        case .waiting:  return 3
+        case .working:  return 2
+        case .done:     return 1
+        case .unknown:  return 0
+        case .orphaned: return -1
         }
     }
 }
@@ -141,6 +145,17 @@ final class SessionScanner {
                 ts = s.ts
             }
 
+            // Orphan detection: if the terminal is closed while Claude is waiting,
+            // the shell dies and `claude` is reparented to launchd (ppid == 1),
+            // blocked forever on a dead stdin. It never emits Stop/SessionEnd, so it
+            // stays `waiting` and the anti-stall nudge would fire endlessly. Reclassify
+            // it as `orphaned` so it stops nagging and offers a one-click cleanup.
+            // Only a *waiting* session gets reclassified: a deliberately backgrounded
+            // claude that's actually working keeps a live state and shouldn't be touched.
+            if cp.ppid <= 1 && st == .waiting {
+                st = .orphaned
+            }
+
             sessions.append(Session(pid: cp.pid, appName: appName, appPath: appPath,
                                     cwd: cwd, state: st, event: ev, tool: tool, message: message, ts: ts))
         }
@@ -217,6 +232,14 @@ final class SessionScanner {
             guard let data = fm.contents(atPath: path),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let pid = obj["pid"] as? Int else { continue }
+            // Self-clean: if the process behind this state file is gone, drop the file.
+            // Covers the case where `claude` actually exited without a Stop/SessionEnd
+            // hook (e.g. hard kill) and its stale state would otherwise linger — and
+            // guards against a recycled pid inheriting a stranger's state.
+            if !processAlive(pid) {
+                try? fm.removeItem(atPath: path)
+                continue
+            }
             let state = SessionState(rawValue: (obj["state"] as? String) ?? "unknown") ?? .unknown
             let cwd = (obj["cwd"] as? String) ?? ""
             let event = obj["event"] as? String
@@ -227,6 +250,26 @@ final class SessionScanner {
             map[pid] = StateRecord(pid: pid, cwd: cwd, state: state, event: event, tool: tool, message: message, ts: ts)
         }
         return map
+    }
+
+    // POSIX liveness probe: kill(pid, 0) succeeds for a live process; ESRCH means
+    // it's gone, EPERM means it exists but we can't signal it (still alive).
+    private func processAlive(_ pid: Int) -> Bool {
+        return kill(pid_t(pid), 0) == 0 || errno == EPERM
+    }
+
+    // Delete the state file(s) whose recorded pid matches — used when the user
+    // terminates an orphaned session from the menu so it doesn't reappear.
+    func removeStateFile(forPid pid: Int) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: stateDir) else { return }
+        for f in files where f.hasSuffix(".json") {
+            let path = (stateDir as NSString).appendingPathComponent(f)
+            guard let data = fm.contents(atPath: path),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (obj["pid"] as? Int) == pid else { continue }
+            try? fm.removeItem(atPath: path)
+        }
     }
 
     func prettyPath(_ path: String) -> String {
@@ -537,6 +580,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             openFolder.target = self
             openFolder.tag = idx
             sub.addItem(openFolder)
+            // Orphaned session: let the user reap the stuck process + its state in one click.
+            if s.state == .orphaned {
+                sub.addItem(.separator())
+                let kill = NSMenuItem(title: L.t("Termina sessione orfana", "Terminate orphaned session"),
+                                      action: #selector(terminateOrphan(_:)), keyEquivalent: "")
+                kill.target = self
+                kill.tag = idx
+                sub.addItem(kill)
+            }
             item.submenu = sub
             menu.addItem(item)
         }
@@ -834,6 +886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .working: return L.t("al lavoro da \(d)", "working for \(d)")
         case .done:    return L.t("finita \(d) fa", "done \(d) ago")
         case .unknown: return relative(since)
+        case .orphaned: return L.t("bloccata da \(d)", "stuck \(d)")
         }
     }
 
@@ -851,6 +904,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let s = cachedSessions[sender.tag]
         guard !s.cwd.isEmpty else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: s.cwd))
+    }
+
+    // Reap an orphaned session: SIGTERM the stuck process (falls back to SIGKILL if
+    // it lingers) and remove its state file so it doesn't resurface on the next scan.
+    @objc private func terminateOrphan(_ sender: NSMenuItem) {
+        guard sender.tag < cachedSessions.count else { return }
+        let s = cachedSessions[sender.tag]
+        kill(pid_t(s.pid), SIGTERM)
+        scanner.removeStateFile(forPid: s.pid)
+        lastNudgeByPid[s.pid] = nil
+        lastStateByPid[s.pid] = nil
+        refresh()
     }
 }
 
